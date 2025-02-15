@@ -1,6 +1,6 @@
 # Reinforcement Learning
 
-This repository contains my projects for Reinforcement Learning (CS140).
+This repository contains my projects for Reinforcement Learning (CSCI141V).
 
 ## Projects
 
