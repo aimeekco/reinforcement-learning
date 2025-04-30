@@ -7,7 +7,7 @@ class DrivingGridEnv(gym.Env):
     endless-runner style driving grid:
     - car is fixed on bottom row, walls in cols 0 & 6, drivable in cols 1–5.
     - obstacles spawn at the top and scroll downward each step.
-    - hybrid action: discrete left/straight/right + continuous throttle.
+    - action: discrete left/straight/right + 5 throttle levels mapped to ∈ [0,1].
     """
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 10}
 
@@ -43,7 +43,7 @@ class DrivingGridEnv(gym.Env):
             shape=(1,),
             dtype=np.float32
         )
-        self.action_space = spaces.MultiDiscrete([3, throttle_levels])
+        self.action_space = spaces.Discrete(3 * self.throttle_levels)
 
         # internal state
         self.grid = np.zeros((self.rows, self.cols), dtype=np.int8)
@@ -64,6 +64,8 @@ class DrivingGridEnv(gym.Env):
         # place car at bottom-center
         self.car_col = self.cols // 2
         self.grid[-1, self.car_col] = 2
+        
+        self.safe_col = self.cols // 2
 
         return self.grid.copy(), {}
 
@@ -82,52 +84,48 @@ class DrivingGridEnv(gym.Env):
                 self.obstacles.append((0, c))
 
     def step(self, action):
-        steering, thr_idx = action
+        steering = action // self.throttle_levels
+        thr_idx  = action % self.throttle_levels
 
-        # move car left/straight/right
+        # move car
         if steering == 0:
             self.car_col = max(1, self.car_col - 1)
         elif steering == 2:
             self.car_col = min(self.cols - 2, self.car_col + 1)
 
-        speed = thr_idx / (self.throttle_levels - 1)
-        # scroll existing obstacles down by 1 row
+        # compute speed & scroll obstacles
+        speed       = thr_idx / (self.throttle_levels - 1)
         self.obstacles = [(r + 1, c) for (r, c) in self.obstacles]
 
-        # update safe columns
+        # random safe-column shift & new obstacles
         move = self.np_random.choice([-1, 0, 1])
         self.safe_col = np.clip(self.safe_col + move, 1, self.cols-2)
-        
-        # spawn new obstacles on row 0
-        for c in range(1, self.cols - 1):
-            if c == self.safe_col:
-                continue
-            if self.np_random.random() < self.obstacle_spawn_rate:
+        for c in range(1, self.cols-1):
+            if c != self.safe_col and self.np_random.random() < self.obstacle_spawn_rate:
                 self.obstacles.append((0, c))
 
-        # rebuild grid array
-        self.grid[:] = 0
-        self.grid[:, 0] = self.grid[:, -1] = 1
+        # rebuild grid
+        self.grid[:]       = 0
+        self.grid[:, 0]    = self.grid[:, -1] = 1
         for (r, c) in self.obstacles:
             if 0 <= r < self.rows:
                 self.grid[r, c] = 3
         self.grid[-1, self.car_col] = 2
 
-        # check collision
-        terminated = any(r == self.rows - 1 and c == self.car_col
+        # check for collision & reward  
+        terminated = any(r == self.rows-1 and c == self.car_col
                          for r, c in self.obstacles)
-
-        # compute reward
-        reward = speed
-        if terminated:
-            reward -= 10.0
+        reward     = speed - (10.0 if terminated else 0.0)
 
         # truncation
         self.step_count += 1
         truncated = (self.step_count >= self.max_steps)
 
+        # pack info and return
         info = {"distance": self.step_count, "crash": terminated}
-        return self.grid.copy(), reward, terminated, truncated, info
+        obs  = self.grid.copy()
+        return obs, reward, terminated, truncated, info
+
 
     def render(self, mode="human"):
         if mode == "human":
