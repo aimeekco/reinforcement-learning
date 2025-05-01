@@ -86,16 +86,21 @@ class DrivingGridEnv(gym.Env):
     def step(self, action):
         steering = action // self.throttle_levels
         thr_idx  = action % self.throttle_levels
+        prev_col = self.car_col
 
         # move car
         if steering == 0:
             self.car_col = max(1, self.car_col - 1)
         elif steering == 2:
             self.car_col = min(self.cols - 2, self.car_col + 1)
+            
+        speed_reward = thr_idx / (self.throttle_levels - 1)
+        lane_reward = 0.1 if self.car_col == prev_col else 0.0
 
         # compute speed & scroll obstacles
-        speed       = thr_idx / (self.throttle_levels - 1)
-        self.obstacles = [(r + 1, c) for (r, c) in self.obstacles]
+        # this would give {1, 2, 3} rows/step
+        scroll_amt = 1 + (thr_idx // 2)
+        self.obstacles = [(r+scroll_amt, c) for (r, c) in self.obstacles]
 
         # random safe-column shift & new obstacles
         move = self.np_random.choice([-1, 0, 1])
@@ -115,7 +120,10 @@ class DrivingGridEnv(gym.Env):
         # check for collision & reward  
         terminated = any(r == self.rows-1 and c == self.car_col
                          for r, c in self.obstacles)
-        reward     = speed - (10.0 if terminated else 0.0)
+        
+        reward = speed_reward + lane_reward
+        if terminated:
+            reward -= 10.0
 
         # truncation
         self.step_count += 1
